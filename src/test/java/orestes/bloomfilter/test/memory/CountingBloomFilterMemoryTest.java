@@ -325,4 +325,74 @@ public class CountingBloomFilterMemoryTest {
         assertTrue(cbf.contains("foo"));
         // We avoid asserting absence for elements only present in one filter due to potential false positives.
     }
+
+    @Test
+    public void testUnionAndIntersectionOnEmptyFilters() throws Exception {
+        // Create a second compatible counting Bloom filter of the same class and config
+        Constructor<? extends CountingBloomFilterMemory<String>> constructor = cbfClass.getConstructor(FilterBuilder.class);
+        CountingBloomFilterMemory<String> other = constructor.newInstance(
+            configure(1000, 0.02, HashMethod.MD5).countingBits(countingBits)
+        );
+
+        // Both should be empty initially
+        assertTrue(cbf.isEmpty());
+        assertTrue(other.isEmpty());
+        assertEquals(Collections.emptyMap(), cbf.getCountMap());
+        assertEquals(Collections.emptyMap(), other.getCountMap());
+
+        // Union of two empty filters should succeed and keep filter empty
+        assertTrue(cbf.union(other));
+        assertTrue(cbf.isEmpty());
+        assertEquals(Collections.emptyMap(), cbf.getCountMap());
+
+        // Intersection of two empty filters should also succeed and keep filter empty
+        assertTrue(cbf.intersect(other));
+        assertTrue(cbf.isEmpty());
+        assertEquals(Collections.emptyMap(), cbf.getCountMap());
+
+        // Other remains empty as well
+        assertTrue(other.isEmpty());
+        assertEquals(Collections.emptyMap(), other.getCountMap());
+    }
+
+    @Test
+    public void testUnionAndIntersectionOnIncompatibleFilters() throws Exception {
+        // Prepare this filter with some data
+        cbf.add("foo");
+        cbf.add("foo");
+        cbf.add("bar");
+        assertTrue(cbf.contains("foo"));
+        assertTrue(cbf.contains("bar"));
+
+        // Snapshot state before operations
+        BitSet beforeBits = cbf.getBitSet();
+        Map<Integer, Long> beforeCounts = new HashMap<>(cbf.getCountMap());
+        long fooBefore = cbf.getEstimatedCount("foo");
+        long barBefore = cbf.getEstimatedCount("bar");
+
+        // Create an incompatible filter by using a different hash method (keeps size and hashes equal, but hashMethod differs)
+        Constructor<? extends CountingBloomFilterMemory<String>> constructor = cbfClass.getConstructor(FilterBuilder.class);
+        CountingBloomFilterMemory<String> incompatible = constructor.newInstance(
+            configure(1000, 0.02, HashMethod.SHA1).countingBits(countingBits)
+        );
+        assertTrue(incompatible.isEmpty());
+
+        // Union should fail and not mutate this filter
+        assertFalse(cbf.union(incompatible));
+        assertEquals(beforeBits, cbf.getBitSet());
+        assertEquals(beforeCounts, cbf.getCountMap());
+        assertEquals(fooBefore, cbf.getEstimatedCount("foo"));
+        assertEquals(barBefore, cbf.getEstimatedCount("bar"));
+
+        // Intersection should fail and not mutate this filter
+        assertFalse(cbf.intersect(incompatible));
+        assertEquals(beforeBits, cbf.getBitSet());
+        assertEquals(beforeCounts, cbf.getCountMap());
+        assertEquals(fooBefore, cbf.getEstimatedCount("foo"));
+        assertEquals(barBefore, cbf.getEstimatedCount("bar"));
+
+        // Incompatible filter remains empty
+        assertTrue(incompatible.isEmpty());
+        assertEquals(Collections.emptyMap(), incompatible.getCountMap());
+    }
 }
