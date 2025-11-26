@@ -26,6 +26,7 @@ public class CountingBloomFilterMemoryTest {
     private final int countingBits;
     private final Class<? extends CountingBloomFilterMemory<String>> cbfClass;
     private CountingBloomFilterMemory<String> cbf;
+    private CountingBloomFilterMemory<String> other;
 
     @Parameterized.Parameters(name = "Counting Bloom filter test with {0} bits and {1}")
     public static Collection<Object[]> data() throws Exception {
@@ -54,6 +55,7 @@ public class CountingBloomFilterMemoryTest {
     public void setUp() throws Exception {
         Constructor<? extends CountingBloomFilterMemory<String>> constructor = cbfClass.getConstructor(FilterBuilder.class);
         cbf = constructor.newInstance(configure(1000, 0.02, HashMethod.MD5).countingBits(countingBits));
+        other = constructor.newInstance(configure(1000, 0.02, HashMethod.MD5).countingBits(countingBits));
     }
 
     @Test
@@ -239,12 +241,6 @@ public class CountingBloomFilterMemoryTest {
 
     @Test
     public void testUnionSumsCounts() throws Exception {
-        // Create a second compatible counting Bloom filter of the same class and config
-        Constructor<? extends CountingBloomFilterMemory<String>> constructor = cbfClass.getConstructor(FilterBuilder.class);
-        CountingBloomFilterMemory<String> other = constructor.newInstance(
-            configure(1000, 0.02, HashMethod.MD5).countingBits(countingBits)
-        );
-
         // Add elements with counts to both filters
         // foo: cbf=3 times, other=2 times => union should estimate 5
         cbf.add("foo");
@@ -286,12 +282,6 @@ public class CountingBloomFilterMemoryTest {
 
     @Test
     public void testIntersectionMinsCounts() throws Exception {
-        // Create a second compatible counting Bloom filter of the same class and config
-        Constructor<? extends CountingBloomFilterMemory<String>> constructor = cbfClass.getConstructor(FilterBuilder.class);
-        CountingBloomFilterMemory<String> other = constructor.newInstance(
-            configure(1000, 0.02, HashMethod.MD5).countingBits(countingBits)
-        );
-
         // Prepare counts in both filters
         // foo: cbf=3 times, other=2 times => intersection should estimate 2
         cbf.add("foo");
@@ -328,12 +318,6 @@ public class CountingBloomFilterMemoryTest {
 
     @Test
     public void testUnionAndIntersectionOnEmptyFilters() throws Exception {
-        // Create a second compatible counting Bloom filter of the same class and config
-        Constructor<? extends CountingBloomFilterMemory<String>> constructor = cbfClass.getConstructor(FilterBuilder.class);
-        CountingBloomFilterMemory<String> other = constructor.newInstance(
-            configure(1000, 0.02, HashMethod.MD5).countingBits(countingBits)
-        );
-
         // Both should be empty initially
         assertTrue(cbf.isEmpty());
         assertTrue(other.isEmpty());
