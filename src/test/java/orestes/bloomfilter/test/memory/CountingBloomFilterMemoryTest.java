@@ -26,6 +26,7 @@ public class CountingBloomFilterMemoryTest {
     private final int countingBits;
     private final Class<? extends CountingBloomFilterMemory<String>> cbfClass;
     private CountingBloomFilterMemory<String> cbf;
+    private CountingBloomFilterMemory<String> other;
 
     @Parameterized.Parameters(name = "Counting Bloom filter test with {0} bits and {1}")
     public static Collection<Object[]> data() throws Exception {
@@ -54,6 +55,7 @@ public class CountingBloomFilterMemoryTest {
     public void setUp() throws Exception {
         Constructor<? extends CountingBloomFilterMemory<String>> constructor = cbfClass.getConstructor(FilterBuilder.class);
         cbf = constructor.newInstance(configure(1000, 0.02, HashMethod.MD5).countingBits(countingBits));
+        other = constructor.newInstance(configure(1000, 0.02, HashMethod.MD5).countingBits(countingBits));
     }
 
     @Test
@@ -235,5 +237,146 @@ public class CountingBloomFilterMemoryTest {
             // Ensure overflow handler was called
             assertTrue(called[0]);
         }
+    }
+
+    @Test
+    public void testUnionSumsCounts() throws Exception {
+        // Add elements with counts to both filters
+        // foo: cbf=3 times, other=2 times => union should estimate 5
+        cbf.add("foo");
+        cbf.add("foo");
+        cbf.add("foo");
+        other.add("foo");
+        other.add("foo");
+
+        // onlyOne: present only in cbf (2 times)
+        cbf.add("onlyOne");
+        cbf.add("onlyOne");
+
+        // onlyTwo: present only in other (3 times)
+        other.add("onlyTwo");
+        other.add("onlyTwo");
+        other.add("onlyTwo");
+
+        // Sanity before union
+        assertEquals(3L, cbf.getEstimatedCount("foo"));
+        assertEquals(2L, other.getEstimatedCount("foo"));
+        assertEquals(2L, cbf.getEstimatedCount("onlyOne"));
+        assertEquals(0L, cbf.getEstimatedCount("onlyTwo"));
+        assertEquals(0L, other.getEstimatedCount("onlyOne"));
+        assertEquals(3L, other.getEstimatedCount("onlyTwo"));
+
+        // Perform union and verify it returns true
+        assertTrue(cbf.union(other));
+
+        // After union, counts should be summed per position
+        assertEquals(5L, cbf.getEstimatedCount("foo"));
+        assertEquals(2L, cbf.getEstimatedCount("onlyOne"));
+        assertEquals(3L, cbf.getEstimatedCount("onlyTwo"));
+
+        // Presence checks according to original Bloom filter union spec
+        assertTrue(cbf.contains("foo"));
+        assertTrue(cbf.contains("onlyOne"));
+        assertTrue(cbf.contains("onlyTwo"));
+    }
+
+    @Test
+    public void testIntersectionMinsCounts() throws Exception {
+        // Prepare counts in both filters
+        // foo: cbf=3 times, other=2 times => intersection should estimate 2
+        cbf.add("foo");
+        cbf.add("foo");
+        cbf.add("foo");
+        other.add("foo");
+        other.add("foo");
+
+        // onlyOne: present only in cbf (2 times)
+        cbf.add("onlyOne");
+        cbf.add("onlyOne");
+
+        // onlyTwo: present only in other (3 times)
+        other.add("onlyTwo");
+        other.add("onlyTwo");
+        other.add("onlyTwo");
+
+        long fooMinBefore = Math.min(cbf.getEstimatedCount("foo"), other.getEstimatedCount("foo"));
+        long onlyOneMinBefore = Math.min(cbf.getEstimatedCount("onlyOne"), other.getEstimatedCount("onlyOne"));
+        long onlyTwoMinBefore = Math.min(cbf.getEstimatedCount("onlyTwo"), other.getEstimatedCount("onlyTwo"));
+
+        // Perform intersection and verify it returns true
+        assertTrue(cbf.intersect(other));
+
+        // After intersection, counts should be the per-position minimum -> equals min of estimated counts before
+        assertEquals(fooMinBefore, cbf.getEstimatedCount("foo"));
+        assertEquals(onlyOneMinBefore, cbf.getEstimatedCount("onlyOne"));
+        assertEquals(onlyTwoMinBefore, cbf.getEstimatedCount("onlyTwo"));
+
+        // Presence checks according to original Bloom filter intersection spec
+        assertTrue(cbf.contains("foo"));
+        // We avoid asserting absence for elements only present in one filter due to potential false positives.
+    }
+
+    @Test
+    public void testUnionAndIntersectionOnEmptyFilters() throws Exception {
+        // Both should be empty initially
+        assertTrue(cbf.isEmpty());
+        assertTrue(other.isEmpty());
+        assertEquals(Collections.emptyMap(), cbf.getCountMap());
+        assertEquals(Collections.emptyMap(), other.getCountMap());
+
+        // Union of two empty filters should succeed and keep filter empty
+        assertTrue(cbf.union(other));
+        assertTrue(cbf.isEmpty());
+        assertEquals(Collections.emptyMap(), cbf.getCountMap());
+
+        // Intersection of two empty filters should also succeed and keep filter empty
+        assertTrue(cbf.intersect(other));
+        assertTrue(cbf.isEmpty());
+        assertEquals(Collections.emptyMap(), cbf.getCountMap());
+
+        // Other remains empty as well
+        assertTrue(other.isEmpty());
+        assertEquals(Collections.emptyMap(), other.getCountMap());
+    }
+
+    @Test
+    public void testUnionAndIntersectionOnIncompatibleFilters() throws Exception {
+        // Prepare this filter with some data
+        cbf.add("foo");
+        cbf.add("foo");
+        cbf.add("bar");
+        assertTrue(cbf.contains("foo"));
+        assertTrue(cbf.contains("bar"));
+
+        // Snapshot state before operations
+        BitSet beforeBits = cbf.getBitSet();
+        Map<Integer, Long> beforeCounts = new HashMap<>(cbf.getCountMap());
+        long fooBefore = cbf.getEstimatedCount("foo");
+        long barBefore = cbf.getEstimatedCount("bar");
+
+        // Create an incompatible filter by using a different hash method (keeps size and hashes equal, but hashMethod differs)
+        Constructor<? extends CountingBloomFilterMemory<String>> constructor = cbfClass.getConstructor(FilterBuilder.class);
+        CountingBloomFilterMemory<String> incompatible = constructor.newInstance(
+            configure(1000, 0.02, HashMethod.SHA1).countingBits(countingBits)
+        );
+        assertTrue(incompatible.isEmpty());
+
+        // Union should fail and not mutate this filter
+        assertFalse(cbf.union(incompatible));
+        assertEquals(beforeBits, cbf.getBitSet());
+        assertEquals(beforeCounts, cbf.getCountMap());
+        assertEquals(fooBefore, cbf.getEstimatedCount("foo"));
+        assertEquals(barBefore, cbf.getEstimatedCount("bar"));
+
+        // Intersection should fail and not mutate this filter
+        assertFalse(cbf.intersect(incompatible));
+        assertEquals(beforeBits, cbf.getBitSet());
+        assertEquals(beforeCounts, cbf.getCountMap());
+        assertEquals(fooBefore, cbf.getEstimatedCount("foo"));
+        assertEquals(barBefore, cbf.getEstimatedCount("bar"));
+
+        // Incompatible filter remains empty
+        assertTrue(incompatible.isEmpty());
+        assertEquals(Collections.emptyMap(), incompatible.getCountMap());
     }
 }
