@@ -7,11 +7,13 @@ import orestes.bloomfilter.CountingBloomFilter;
 import orestes.bloomfilter.FilterBuilder;
 import orestes.bloomfilter.HashProvider.HashMethod;
 import orestes.bloomfilter.memory.BloomFilterMemory;
+import orestes.bloomfilter.memory.CountingBloomFilterDeserializer;
 import orestes.bloomfilter.memory.CountingBloomFilterMemory;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.BitSet;
+import java.util.HashMap;
 import java.util.Map;
 
 public class BloomFilterConverter {
@@ -103,12 +105,14 @@ public class BloomFilterConverter {
 
             // Restore the count map
             JsonObject countsJson = root.getAsJsonObject("counts");
+            Map<Integer, Long> countMap = new HashMap<>();
             for (String key : countsJson.keySet()) {
                 int position = Integer.parseInt(key);
                 long count = countsJson.get(key).getAsLong();
-                filter.set(position, count);
-                filter.getBloomFilter().setBit(position, count > 0);
+                countMap.put(position, count);
             }
+
+            CountingBloomFilterDeserializer.restoreFromCountMap(filter, countMap);
 
             return filter;
         } else {
